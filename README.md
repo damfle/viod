@@ -46,6 +46,10 @@ type:
 
 This allows viod to apply the correct defaults and validations.
 
+**PCI Address Format**: Both short (`05:00.0`) and full (`0000:05:00.0`) 
+PCI address formats are supported. Short format matches `lspci` output 
+and is automatically expanded to full format internally.
+
 ------------------------------------------------------------------------
 
 ## Key Features
@@ -78,7 +82,7 @@ This allows viod to apply the correct defaults and validations.
 ### Network device (`/etc/vio.d/net0.conf`)
 
     [pf]
-    name = eth0
+    name = 05:00.0
     kind = net
     vfs = 4
     promisc = on
@@ -94,7 +98,7 @@ This allows viod to apply the correct defaults and validations.
 ### GPU device (`/etc/vio.d/gpu0.conf`)
 
     [pf]
-    name = 0000:65:00.0
+    name = 65:00.0
     kind = gpu
     vfs = 2
 
@@ -104,7 +108,7 @@ This allows viod to apply the correct defaults and validations.
 ### Generic device (`/etc/vio.d/accel.conf`)
 
     [pf]
-    name = 0000:81:00.0
+    name = 81:00.0
     kind = dev
     vfs = 8
 

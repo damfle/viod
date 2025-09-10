@@ -59,6 +59,7 @@ int set_vf_vlan(const char *pf_name, int vf_id, int vlan);
 int bind_vf_driver(const char *pci_addr, const char *driver);
 int get_vf_pci_address(const char *pf_name, int vf_id, char *vf_pci_addr, size_t addr_size);
 int get_pf_pci_address(const char *pf_name, device_kind_t kind, char *pf_pci_addr, size_t addr_size);
+int normalize_pci_address(const char *input_addr, char *normalized_addr, size_t addr_size);
 void cleanup_configs(config_list_t *configs);
 void log_message(int priority, const char *format, ...);
 

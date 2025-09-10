@@ -37,16 +37,9 @@ int create_vfs(pf_config_t *config) {
     
     log_message(LOG_INFO, "Creating %d VFs for PF %s", config->num_vfs, config->name);
     
-    // Construct sysfs path based on device type
-    if (config->kind == DEVICE_KIND_NET) {
-        // For network devices, use the interface name to find PCI path
-        snprintf(sysfs_path, sizeof(sysfs_path), 
-                "/sys/class/net/%s/device/sriov_numvfs", config->name);
-    } else {
-        // For GPU and generic devices, assume PCI address format
-        snprintf(sysfs_path, sizeof(sysfs_path), 
-                "/sys/bus/pci/devices/%s/sriov_numvfs", config->name);
-    }
+    // Use PCI address format for all device types
+    snprintf(sysfs_path, sizeof(sysfs_path), 
+            "/sys/bus/pci/devices/%s/sriov_numvfs", config->name);
     
     // First, disable existing VFs
     if (write_sysfs_value(sysfs_path, "0") != 0) {
@@ -91,58 +84,50 @@ int create_vfs(pf_config_t *config) {
     return 0;
 }
 
-int get_pf_pci_address(const char *pf_name, device_kind_t kind, char *pf_pci_addr, size_t addr_size) {
-    char path[512];
+int normalize_pci_address(const char *input_addr, char *normalized_addr, size_t addr_size) {
+    // Check if the address contains a colon to determine format
+    if (strchr(input_addr, ':') == NULL) {
+        log_message(LOG_ERR, "Invalid PCI address format: %s", input_addr);
+        return -1;
+    }
     
-    if (kind == DEVICE_KIND_NET) {
-        // For network devices, resolve interface name to PCI address
-        snprintf(path, sizeof(path), "/sys/class/net/%s/device", pf_name);
-        
-        char resolved_path[512];
-        ssize_t len = readlink(path, resolved_path, sizeof(resolved_path) - 1);
-        if (len == -1) {
-            log_message(LOG_ERR, "Cannot resolve PCI address for network interface %s", pf_name);
-            return -1;
-        }
-        resolved_path[len] = '\0';
-        
-        // Extract PCI address from path like "../../../0000:05:00.0"
-        char *pci_addr = strrchr(resolved_path, '/');
-        if (!pci_addr) {
-            log_message(LOG_ERR, "Invalid PCI path format for %s", pf_name);
-            return -1;
-        }
-        pci_addr++; // Skip the '/'
-        
-        strncpy(pf_pci_addr, pci_addr, addr_size - 1);
-        pf_pci_addr[addr_size - 1] = '\0';
+    // Count colons to determine if it's short (05:00.0) or full (0000:05:00.0) format
+    int colon_count = 0;
+    for (const char *p = input_addr; *p; p++) {
+        if (*p == ':') colon_count++;
+    }
+    
+    if (colon_count == 1) {
+        // Short format (05:00.0) - add domain prefix
+        snprintf(normalized_addr, addr_size, "0000:%s", input_addr);
+        log_message(LOG_DEBUG, "Normalized short PCI address %s to %s", input_addr, normalized_addr);
+    } else if (colon_count == 2) {
+        // Full format (0000:05:00.0) - use as is
+        strncpy(normalized_addr, input_addr, addr_size - 1);
+        normalized_addr[addr_size - 1] = '\0';
+        log_message(LOG_DEBUG, "Using full PCI address %s", normalized_addr);
     } else {
-        // For GPU and generic devices, assume pf_name is already a PCI address
-        strncpy(pf_pci_addr, pf_name, addr_size - 1);
-        pf_pci_addr[addr_size - 1] = '\0';
+        log_message(LOG_ERR, "Invalid PCI address format: %s", input_addr);
+        return -1;
     }
     
     return 0;
+}
+
+int get_pf_pci_address(const char *pf_name, device_kind_t kind, char *pf_pci_addr, size_t addr_size) {
+    (void)kind; // Unused parameter - all devices use PCI addresses now
+    
+    // Normalize the PCI address (convert short format to full format if needed)
+    return normalize_pci_address(pf_name, pf_pci_addr, addr_size);
 }
 
 int get_vf_pci_address(const char *pf_name, int vf_id, char *vf_pci_addr, size_t addr_size) {
     char pf_pci_addr[64];
     char virtfn_path[512];
     char resolved_path[512];
-    device_kind_t kind;
     
-    // Try to determine device kind - check if it's a network interface first
-    char net_path[512];
-    snprintf(net_path, sizeof(net_path), "/sys/class/net/%s", pf_name);
-    if (access(net_path, F_OK) == 0) {
-        kind = DEVICE_KIND_NET;
-    } else {
-        // Assume it's already a PCI address for GPU/generic devices
-        kind = DEVICE_KIND_GPU; // or DEVICE_KIND_DEV, doesn't matter for PCI address handling
-    }
-    
-    // First get the PF PCI address
-    if (get_pf_pci_address(pf_name, kind, pf_pci_addr, sizeof(pf_pci_addr)) != 0) {
+    // Get the PF PCI address (now always a PCI address)
+    if (get_pf_pci_address(pf_name, DEVICE_KIND_DEV, pf_pci_addr, sizeof(pf_pci_addr)) != 0) {
         return -1;
     }
     
@@ -212,49 +197,121 @@ int configure_vf(pf_config_t *pf_config, vf_config_t *vf_config) {
     return 0;
 }
 
-int enable_promiscuous_mode(const char *interface) {
-    char command[256];
-    snprintf(command, sizeof(command), "ip link set %s promisc on", interface);
+int enable_promiscuous_mode(const char *pci_addr) {
+    char net_path[512];
+    char interface_name[256] = "";
+    DIR *net_dir;
+    struct dirent *entry;
     
-    int result = system(command);
-    if (result != 0) {
-        log_message(LOG_ERR, "Failed to enable promiscuous mode on %s", interface);
+    // Find network interface name from PCI address
+    snprintf(net_path, sizeof(net_path), "/sys/bus/pci/devices/%s/net", pci_addr);
+    net_dir = opendir(net_path);
+    
+    if (net_dir) {
+        while ((entry = readdir(net_dir)) != NULL) {
+            if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                strncpy(interface_name, entry->d_name, sizeof(interface_name) - 1);
+                break;
+            }
+        }
+        closedir(net_dir);
+    }
+    
+    if (strlen(interface_name) == 0) {
+        log_message(LOG_ERR, "Cannot find network interface for PCI device %s", pci_addr);
         return -1;
     }
     
-    log_message(LOG_INFO, "Enabled promiscuous mode on %s", interface);
+    char command[512];
+    snprintf(command, sizeof(command), "ip link set %s promisc on", interface_name);
+    
+    int result = system(command);
+    if (result != 0) {
+        log_message(LOG_ERR, "Failed to enable promiscuous mode on %s (%s)", interface_name, pci_addr);
+        return -1;
+    }
+    
+    log_message(LOG_INFO, "Enabled promiscuous mode on %s (%s)", interface_name, pci_addr);
     return 0;
 }
 
-int set_vf_mac(const char *pf_name, int vf_id, const char *mac) {
-    char command[256];
+int set_vf_mac(const char *pf_pci_addr, int vf_id, const char *mac) {
+    char net_path[512];
+    char interface_name[256] = "";
+    DIR *net_dir;
+    struct dirent *entry;
+    
+    // Find network interface name from PCI address
+    snprintf(net_path, sizeof(net_path), "/sys/bus/pci/devices/%s/net", pf_pci_addr);
+    net_dir = opendir(net_path);
+    
+    if (net_dir) {
+        while ((entry = readdir(net_dir)) != NULL) {
+            if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                strncpy(interface_name, entry->d_name, sizeof(interface_name) - 1);
+                break;
+            }
+        }
+        closedir(net_dir);
+    }
+    
+    if (strlen(interface_name) == 0) {
+        log_message(LOG_ERR, "Cannot find network interface for PCI device %s", pf_pci_addr);
+        return -1;
+    }
+    
+    char command[512];
     snprintf(command, sizeof(command), "ip link set %s vf %d mac %s", 
-             pf_name, vf_id, mac);
+             interface_name, vf_id, mac);
     
     int result = system(command);
     if (result != 0) {
-        log_message(LOG_ERR, "Failed to set MAC %s for VF %d on %s", 
-                   mac, vf_id, pf_name);
+        log_message(LOG_ERR, "Failed to set MAC %s for VF %d on %s (%s)", 
+                   mac, vf_id, interface_name, pf_pci_addr);
         return -1;
     }
     
-    log_message(LOG_INFO, "Set MAC %s for VF %d on %s", mac, vf_id, pf_name);
+    log_message(LOG_INFO, "Set MAC %s for VF %d on %s (%s)", mac, vf_id, interface_name, pf_pci_addr);
     return 0;
 }
 
-int set_vf_vlan(const char *pf_name, int vf_id, int vlan) {
-    char command[256];
-    snprintf(command, sizeof(command), "ip link set %s vf %d vlan %d", 
-             pf_name, vf_id, vlan);
+int set_vf_vlan(const char *pf_pci_addr, int vf_id, int vlan) {
+    char net_path[512];
+    char interface_name[256] = "";
+    DIR *net_dir;
+    struct dirent *entry;
     
-    int result = system(command);
-    if (result != 0) {
-        log_message(LOG_ERR, "Failed to set VLAN %d for VF %d on %s", 
-                   vlan, vf_id, pf_name);
+    // Find network interface name from PCI address
+    snprintf(net_path, sizeof(net_path), "/sys/bus/pci/devices/%s/net", pf_pci_addr);
+    net_dir = opendir(net_path);
+    
+    if (net_dir) {
+        while ((entry = readdir(net_dir)) != NULL) {
+            if (entry->d_type == DT_DIR && strcmp(entry->d_name, ".") != 0 && strcmp(entry->d_name, "..") != 0) {
+                strncpy(interface_name, entry->d_name, sizeof(interface_name) - 1);
+                break;
+            }
+        }
+        closedir(net_dir);
+    }
+    
+    if (strlen(interface_name) == 0) {
+        log_message(LOG_ERR, "Cannot find network interface for PCI device %s", pf_pci_addr);
         return -1;
     }
     
-    log_message(LOG_INFO, "Set VLAN %d for VF %d on %s", vlan, vf_id, pf_name);
+    char command[512];
+    snprintf(command, sizeof(command), "ip link set %s vf %d vlan %d", 
+             interface_name, vf_id, vlan);
+    
+    int result = system(command);
+    if (result != 0) {
+        log_message(LOG_ERR, "Failed to set VLAN %d for VF %d on %s (%s)", 
+                   vlan, vf_id, interface_name, pf_pci_addr);
+        return -1;
+    }
+    
+    log_message(LOG_INFO, "Set VLAN %d for VF %d on %s (%s)", vlan, vf_id, interface_name, pf_pci_addr);
     return 0;
 }
 

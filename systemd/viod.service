@@ -1,7 +1,8 @@
 [Unit]
 Description=viod - SR-IOV Virtual Function Manager
-After=network.target
-Wants=network.target
+DefaultDependencies=no
+Before=network-pre.target
+Wants=network-pre.target
 
 [Service]
 Type=simple
@@ -12,4 +13,4 @@ RestartSec=5
 User=root
 
 [Install]
-WantedBy=multi-user.target
+WantedBy=sysinit.target
