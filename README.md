@@ -19,6 +19,8 @@ This project is mostly vibe coded. Use at your own risk.
 
 **Dependencies**: OpenSSL development libraries are required for stable MAC generation.
 
+### From Source
+
 ```bash
 # Install dependencies (Ubuntu/Debian)
 sudo apt-get install libssl-dev
@@ -36,6 +38,16 @@ sudo make install
 sudo systemctl daemon-reload
 sudo systemctl enable viod
 sudo systemctl start viod
+```
+
+### Arch Linux
+
+```bash
+# Build from PKGBUILD (for development/testing)
+makepkg -si
+
+# Or install from AUR (when available)
+yay -S viod  # or your preferred AUR helper
 ```
 
 ------------------------------------------------------------------------

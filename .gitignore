@@ -1,2 +1,9 @@
 bin/
 obj/
+
+
+# Packaging artifacts in dist/
+dist/src/
+dist/pkg/
+dist/*.pkg.tar.*
+dist/.SRCINFO

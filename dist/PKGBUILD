@@ -1,0 +1,92 @@
+# Maintainer: Damien Fleury <damfle@example.com>
+pkgname=viod
+pkgver=1.0.0
+pkgrel=1
+pkgdesc="SR-IOV Virtual Function daemon for managing network, GPU, and generic SR-IOV devices"
+arch=('x86_64' 'i686' 'aarch64')
+url="https://github.com/damfle/viod"
+license=('custom')
+depends=('openssl' 'systemd')
+makedepends=('gcc' 'make')
+backup=('etc/vio.d/README')
+
+prepare() {
+    # Copy source files from parent directory (where the actual source is)
+    mkdir -p "${srcdir}/viod"
+    cp -r "${startdir}/../"* "${srcdir}/viod/" 2>/dev/null || true
+    # Remove build artifacts, dist directory copy, and other unwanted files
+    rm -rf "${srcdir}/viod/bin" "${srcdir}/viod/obj" "${srcdir}/viod/pkg" "${srcdir}/viod"/*.pkg.tar.* 2>/dev/null || true
+    rm -rf "${srcdir}/viod/dist" "${srcdir}/viod/srcdir" 2>/dev/null || true
+    rm -rf "${srcdir}/viod/.git" 2>/dev/null || true
+}
+
+build() {
+    cd "$srcdir/viod"
+    make
+}
+
+package() {
+    cd "$srcdir/viod"
+    
+    # Install binary
+    install -Dm755 bin/viod "$pkgdir/usr/bin/viod"
+    
+    # Install systemd service
+    install -Dm644 systemd/viod.service "$pkgdir/usr/lib/systemd/system/viod.service"
+    
+    # Create configuration directory
+    install -dm755 "$pkgdir/etc/vio.d"
+    
+    # Install example configurations
+    install -Dm644 examples/net0.conf "$pkgdir/usr/share/doc/viod/examples/net0.conf"
+    install -Dm644 examples/gpu0.conf "$pkgdir/usr/share/doc/viod/examples/gpu0.conf"
+    install -Dm644 examples/accel.conf "$pkgdir/usr/share/doc/viod/examples/accel.conf"
+    install -Dm644 examples/auto-mac.conf "$pkgdir/usr/share/doc/viod/examples/auto-mac.conf"
+    
+    # Install documentation
+    install -Dm644 README.md "$pkgdir/usr/share/doc/viod/README.md"
+    install -Dm644 LICENSE "$pkgdir/usr/share/licenses/viod/LICENSE"
+    
+    # Create a README in the config directory
+    cat > "$pkgdir/etc/vio.d/README" << EOF
+# viod configuration directory
+#
+# Place your .conf files here to configure SR-IOV devices.
+# Examples are available in /usr/share/doc/viod/examples/
+#
+# After adding or modifying configurations, viod will automatically
+# detect changes and apply them.
+#
+# To reload manually: systemctl reload viod
+# To view logs: journalctl -u viod -f
+EOF
+}
+
+post_install() {
+    echo "==> viod has been installed"
+    echo "==> Configuration files go in /etc/vio.d/"
+    echo "==> Example configurations are in /usr/share/doc/viod/examples/"
+    echo "==> Enable and start the service with:"
+    echo "    systemctl enable viod"
+    echo "    systemctl start viod"
+    echo ""
+    echo "==> NOTE: viod requires root privileges to manage SR-IOV devices"
+    echo "==> Ensure your hardware supports SR-IOV and it's enabled in BIOS/UEFI"
+}
+
+post_upgrade() {
+    echo "==> viod has been upgraded"
+    echo "==> Restart the service if it's running:"
+    echo "    systemctl restart viod"
+}
+
+pre_remove() {
+    systemctl stop viod 2>/dev/null || true
+    systemctl disable viod 2>/dev/null || true
+}
+
+post_remove() {
+    echo "==> viod has been removed"
+    echo "==> Configuration files in /etc/vio.d/ have been preserved"
+    echo "==> Remove them manually if no longer needed"
+}
