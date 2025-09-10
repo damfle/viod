@@ -1,15 +1,25 @@
+/**
+ * viod - SR-IOV Virtual Function daemon
+ * 
+ * Configuration file parsing implementation
+ * Handles INI-style configuration files with [pf] and [vfN] sections.
+ */
 #include "viod.h"
 #include <ctype.h>
 
+/**
+ * Remove leading and trailing whitespace from a string in-place
+ * Returns pointer to the trimmed string
+ */
 static char *trim_whitespace(char *str) {
     char *end;
     
-    // Trim leading space
+    /* Trim leading space */
     while (isspace((unsigned char)*str)) str++;
     
     if (*str == 0) return str;
     
-    // Trim trailing space
+    /* Trim trailing space */
     end = str + strlen(str) - 1;
     while (end > str && isspace((unsigned char)*end)) end--;
     
@@ -17,6 +27,10 @@ static char *trim_whitespace(char *str) {
     return str;
 }
 
+/**
+ * Parse device kind string into enum value
+ * Returns corresponding device_kind_t, defaults to DEVICE_KIND_DEV for unknown types
+ */
 static device_kind_t parse_device_kind(const char *kind_str) {
     if (strcmp(kind_str, "net") == 0) {
         return DEVICE_KIND_NET;
@@ -25,26 +39,51 @@ static device_kind_t parse_device_kind(const char *kind_str) {
     } else if (strcmp(kind_str, "dev") == 0) {
         return DEVICE_KIND_DEV;
     }
-    return DEVICE_KIND_DEV; // Default fallback
+    return DEVICE_KIND_DEV; /* Default fallback */
 }
 
+/**
+ * Parse section header like [pf] or [vf0]
+ * Returns 1 if line is a section header, 0 otherwise
+ */
 static int parse_section(const char *line, char *section) {
     if (line[0] == '[' && line[strlen(line)-1] == ']') {
         strncpy(section, line + 1, MAX_NAME_LEN - 1);
-        section[strlen(section) - 1] = '\0'; // Remove closing bracket
+        section[strlen(section) - 1] = '\0'; /* Remove closing bracket */
         return 1;
     }
     return 0;
 }
 
+/**
+ * Parse a key-value pair from a configuration line
+ * Returns 1 on success, 0 on failure
+ */
 static int parse_key_value(const char *line, char *key, char *value) {
     char *eq = strchr(line, '=');
     if (!eq) return 0;
     
-    *eq = '\0';
-    strcpy(key, trim_whitespace((char*)line));
-    strcpy(value, trim_whitespace(eq + 1));
-    *eq = '='; // Restore original line
+    // Calculate lengths to prevent buffer overflow
+    size_t key_len = eq - line;
+    size_t value_len = strlen(eq + 1);
+    
+    if (key_len >= MAX_NAME_LEN || value_len >= MAX_NAME_LEN) {
+        return 0; // Too long
+    }
+    
+    // Copy and trim key
+    char temp_key[MAX_NAME_LEN];
+    strncpy(temp_key, line, key_len);
+    temp_key[key_len] = '\0';
+    strncpy(key, trim_whitespace(temp_key), MAX_NAME_LEN - 1);
+    key[MAX_NAME_LEN - 1] = '\0';
+    
+    // Copy and trim value
+    char temp_value[MAX_NAME_LEN];
+    strncpy(temp_value, eq + 1, MAX_NAME_LEN - 1);
+    temp_value[MAX_NAME_LEN - 1] = '\0';
+    strncpy(value, trim_whitespace(temp_value), MAX_NAME_LEN - 1);
+    value[MAX_NAME_LEN - 1] = '\0';
     
     return 1;
 }
@@ -125,6 +164,10 @@ int parse_config_file(const char *filename, pf_config_t *config) {
     return 0;
 }
 
+/**
+ * Load all .conf files from the configuration directory
+ * Returns 0 on success, -1 on failure
+ */
 int load_all_configs(config_list_t *configs) {
     DIR *dir = opendir(CONFIG_DIR);
     if (!dir) {
@@ -133,27 +176,38 @@ int load_all_configs(config_list_t *configs) {
         return -1;
     }
     
-    // Initialize config list
+    /* Initialize config list */
     configs->capacity = 16;
     configs->configs = malloc(configs->capacity * sizeof(pf_config_t));
+    if (!configs->configs) {
+        log_message(LOG_ERR, "Failed to allocate memory for configurations");
+        closedir(dir);
+        return -1;
+    }
     configs->count = 0;
     
     struct dirent *entry;
     while ((entry = readdir(dir)) != NULL) {
         if (entry->d_type != DT_REG) continue;
         
-        // Check for .conf extension
+        /* Check for .conf extension */
         char *ext = strrchr(entry->d_name, '.');
         if (!ext || strcmp(ext, ".conf") != 0) continue;
         
-        // Expand capacity if needed
+        /* Expand capacity if needed */
         if (configs->count >= configs->capacity) {
             configs->capacity *= 2;
-            configs->configs = realloc(configs->configs, 
-                                     configs->capacity * sizeof(pf_config_t));
+            pf_config_t *new_configs = realloc(configs->configs, 
+                                              configs->capacity * sizeof(pf_config_t));
+            if (!new_configs) {
+                log_message(LOG_ERR, "Failed to reallocate memory for configurations");
+                closedir(dir);
+                return -1;
+            }
+            configs->configs = new_configs;
         }
         
-        // Parse config file
+        /* Parse config file */
         char filepath[512];
         snprintf(filepath, sizeof(filepath), "%s/%s", CONFIG_DIR, entry->d_name);
         
@@ -166,6 +220,10 @@ int load_all_configs(config_list_t *configs) {
     return 0;
 }
 
+/**
+ * Free all memory associated with a configuration list
+ * Resets the list to empty state
+ */
 void cleanup_configs(config_list_t *configs) {
     if (configs->configs) {
         free(configs->configs);

@@ -1,17 +1,32 @@
+/**
+ * viod - SR-IOV Virtual Function daemon
+ * 
+ * Main daemon implementation that monitors configuration files and manages
+ * SR-IOV Virtual Functions for network, GPU, and generic devices.
+ */
 #include "viod.h"
 
+/* Global daemon state */
 static volatile int running = 1;
 
+/**
+ * Signal handler for daemon control
+ * Handles SIGTERM/SIGINT for graceful shutdown and SIGHUP for reload
+ */
 static void signal_handler(int sig) {
     if (sig == SIGTERM || sig == SIGINT) {
         log_message(LOG_INFO, "Received signal %d, shutting down", sig);
         running = 0;
     } else if (sig == SIGHUP) {
         log_message(LOG_INFO, "Received SIGHUP, reloading configurations");
-        // Signal will be handled in main loop
+        /* Signal will be handled in main loop */
     }
 }
 
+/**
+ * Setup inotify monitoring for configuration directory changes
+ * Returns file descriptor on success, -1 on failure
+ */
 static int watch_config_directory(void) {
     int inotify_fd = inotify_init();
     if (inotify_fd < 0) {
@@ -31,19 +46,23 @@ static int watch_config_directory(void) {
     return inotify_fd;
 }
 
+/**
+ * Reload all configurations from disk and apply them
+ * Returns 0 on success, -1 on failure
+ */
 static int reload_configurations(config_list_t *configs) {
     log_message(LOG_INFO, "Reloading configurations");
     
-    // Clean up old configs
+    /* Clean up old configs */
     cleanup_configs(configs);
     
-    // Load new configs
+    /* Load new configs */
     if (load_all_configs(configs) != 0) {
         log_message(LOG_ERR, "Failed to load configurations");
         return -1;
     }
     
-    // Apply all configurations
+    /* Apply all configurations */
     if (apply_all_configs(configs) != 0) {
         log_message(LOG_ERR, "Failed to apply configurations");
         return -1;

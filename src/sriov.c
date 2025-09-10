@@ -1,5 +1,15 @@
+/**
+ * viod - SR-IOV Virtual Function daemon
+ * 
+ * SR-IOV management implementation
+ * Handles VF creation, configuration, driver binding, and network setup.
+ */
 #include "viod.h"
 
+/**
+ * Write a value to a sysfs file
+ * Returns 0 on success, -1 on failure
+ */
 static int write_sysfs_value(const char *path, const char *value) {
     int fd = open(path, O_WRONLY);
     if (fd < 0) {
@@ -18,6 +28,10 @@ static int write_sysfs_value(const char *path, const char *value) {
     return 0;
 }
 
+/**
+ * Apply all loaded configurations to create and configure VFs
+ * Returns 0 on success (some individual configs may fail with warnings)
+ */
 int apply_all_configs(config_list_t *configs) {
     log_message(LOG_INFO, "Applying %zu configuration(s)", configs->count);
     
@@ -31,37 +45,42 @@ int apply_all_configs(config_list_t *configs) {
     return 0;
 }
 
+/**
+ * Create and configure Virtual Functions for a Physical Function
+ * Handles VF creation, individual VF configuration, and promiscuous mode setup
+ * Returns 0 on success, -1 on critical failure
+ */
 int create_vfs(pf_config_t *config) {
     char sysfs_path[512];
     char num_vfs_str[16];
     
     log_message(LOG_INFO, "Creating %d VFs for PF %s", config->num_vfs, config->name);
     
-    // Use PCI address format for all device types
+    /* Use PCI address format for all device types */
     snprintf(sysfs_path, sizeof(sysfs_path), 
             "/sys/bus/pci/devices/%s/sriov_numvfs", config->name);
     
-    // First, disable existing VFs
+    /* First, disable existing VFs */
     if (write_sysfs_value(sysfs_path, "0") != 0) {
         log_message(LOG_WARNING, "Failed to disable existing VFs for %s", config->name);
     }
     
-    // Wait a moment for cleanup
-    usleep(100000); // 100ms
+    /* Wait a moment for cleanup */
+    usleep(100000); /* 100ms */
     
-    // Create new VFs
+    /* Create new VFs */
     snprintf(num_vfs_str, sizeof(num_vfs_str), "%d", config->num_vfs);
     if (write_sysfs_value(sysfs_path, num_vfs_str) != 0) {
         log_message(LOG_ERR, "Failed to create VFs for %s", config->name);
         return -1;
     }
     
-    // Wait for VF creation
-    usleep(500000); // 500ms
+    /* Wait for VF creation */
+    usleep(500000); /* 500ms */
     
-    // Configure each VF
+    /* Configure each VF */
     for (int i = 0; i < config->num_vfs; i++) {
-        // Ensure VF has a valid ID (in case it wasn't explicitly configured)
+        /* Ensure VF has a valid ID (in case it wasn't explicitly configured) */
         if (config->vfs[i].id < 0) {
             config->vfs[i].id = i;
         }
@@ -71,7 +90,7 @@ int create_vfs(pf_config_t *config) {
         }
     }
     
-    // Enable promiscuous mode if requested (network devices only)
+    /* Enable promiscuous mode if requested (network devices only) */
     if (config->kind == DEVICE_KIND_NET && config->promisc) {
         if (enable_promiscuous_mode(config->name) != 0) {
             log_message(LOG_WARNING, "Failed to enable promiscuous mode on %s", config->name);
@@ -84,25 +103,30 @@ int create_vfs(pf_config_t *config) {
     return 0;
 }
 
+/**
+ * Normalize PCI address format
+ * Converts short format (05:00.0) to full format (0000:05:00.0) if needed
+ * Returns 0 on success, -1 on invalid format
+ */
 int normalize_pci_address(const char *input_addr, char *normalized_addr, size_t addr_size) {
-    // Check if the address contains a colon to determine format
+    /* Check if the address contains a colon to determine format */
     if (strchr(input_addr, ':') == NULL) {
         log_message(LOG_ERR, "Invalid PCI address format: %s", input_addr);
         return -1;
     }
     
-    // Count colons to determine if it's short (05:00.0) or full (0000:05:00.0) format
+    /* Count colons to determine if it's short (05:00.0) or full (0000:05:00.0) format */
     int colon_count = 0;
     for (const char *p = input_addr; *p; p++) {
         if (*p == ':') colon_count++;
     }
     
     if (colon_count == 1) {
-        // Short format (05:00.0) - add domain prefix
+        /* Short format (05:00.0) - add domain prefix */
         snprintf(normalized_addr, addr_size, "0000:%s", input_addr);
         log_message(LOG_DEBUG, "Normalized short PCI address %s to %s", input_addr, normalized_addr);
     } else if (colon_count == 2) {
-        // Full format (0000:05:00.0) - use as is
+        /* Full format (0000:05:00.0) - use as is */
         strncpy(normalized_addr, input_addr, addr_size - 1);
         normalized_addr[addr_size - 1] = '\0';
         log_message(LOG_DEBUG, "Using full PCI address %s", normalized_addr);
@@ -114,10 +138,13 @@ int normalize_pci_address(const char *input_addr, char *normalized_addr, size_t 
     return 0;
 }
 
-int get_pf_pci_address(const char *pf_name, device_kind_t kind, char *pf_pci_addr, size_t addr_size) {
-    (void)kind; // Unused parameter - all devices use PCI addresses now
-    
-    // Normalize the PCI address (convert short format to full format if needed)
+/**
+ * Get normalized PCI address for a Physical Function
+ * Converts short format (05:00.0) to full format (0000:05:00.0) if needed
+ * Returns 0 on success, -1 on failure
+ */
+int get_pf_pci_address(const char *pf_name, char *pf_pci_addr, size_t addr_size) {
+    /* Normalize the PCI address (convert short format to full format if needed) */
     return normalize_pci_address(pf_name, pf_pci_addr, addr_size);
 }
 
@@ -126,8 +153,8 @@ int get_vf_pci_address(const char *pf_name, int vf_id, char *vf_pci_addr, size_t
     char virtfn_path[512];
     char resolved_path[512];
     
-    // Get the PF PCI address (now always a PCI address)
-    if (get_pf_pci_address(pf_name, DEVICE_KIND_DEV, pf_pci_addr, sizeof(pf_pci_addr)) != 0) {
+    /* Get the PF PCI address (now always a PCI address) */
+    if (get_pf_pci_address(pf_name, pf_pci_addr, sizeof(pf_pci_addr)) != 0) {
         return -1;
     }
     
@@ -438,19 +465,26 @@ int bind_vf_driver(const char *pci_addr, const char *driver) {
     return 0;
 }
 
+/**
+ * Generate a stable, deterministic MAC address for a VF
+ * Uses SHA256 hash of PCI address, VF ID, and salt to ensure:
+ * - Consistent MAC across reboots
+ * - Unique MACs per PF/VF combination
+ * - Locally administered format (02:xx:xx:xx:xx:xx) to avoid conflicts
+ */
 void generate_stable_mac(const char *pf_pci_addr, int vf_id, char *mac_addr) {
     unsigned char hash[SHA256_DIGEST_LENGTH];
     char input[512];
     
-    // Create deterministic input string: PCI address + VF ID + "viod"
+    /* Create deterministic input string: PCI address + VF ID + "viod" */
     snprintf(input, sizeof(input), "%s-%d-viod", pf_pci_addr, vf_id);
     
-    // Generate SHA256 hash
+    /* Generate SHA256 hash */
     SHA256((unsigned char *)input, strlen(input), hash);
     
-    // Create MAC address with locally administered bit set (02:xx:xx:xx:xx:xx)
-    // This ensures it won't conflict with real hardware MACs
-    // Use the first 5 bytes of the hash for the last 5 octets
+    /* Create MAC address with locally administered bit set (02:xx:xx:xx:xx:xx)
+     * This ensures it won't conflict with real hardware MACs
+     * Use the first 5 bytes of the hash for the last 5 octets */
     snprintf(mac_addr, 18, "02:%02x:%02x:%02x:%02x:%02x",
              hash[0], hash[1], hash[2], hash[3], hash[4]);
 }
