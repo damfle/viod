@@ -30,7 +30,7 @@ clean:
 	rm -rf $(OBJDIR) $(BINDIR)
 
 install: $(TARGET)
-	install -m 755 $(TARGET) $(DESTDIR)/usr/local/bin/viod
+	install -m 755 $(TARGET) $(DESTDIR)/usr/bin/viod
 	install -d $(DESTDIR)/etc/vio.d
 	install -m 644 systemd/viod.service $(DESTDIR)/etc/systemd/system/
 
