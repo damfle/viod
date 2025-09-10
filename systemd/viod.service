@@ -6,7 +6,7 @@ Wants=network-pre.target
 
 [Service]
 Type=simple
-ExecStart=/usr/local/bin/viod
+ExecStart=/usr/bin/viod
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
 RestartSec=5
