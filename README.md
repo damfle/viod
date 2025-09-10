@@ -17,7 +17,15 @@ This project is mostly vibe coded. Use at your own risk.
 
 ## Building and Installation
 
+**Dependencies**: OpenSSL development libraries are required for stable MAC generation.
+
 ```bash
+# Install dependencies (Ubuntu/Debian)
+sudo apt-get install libssl-dev
+
+# Install dependencies (RHEL/CentOS/Fedora)  
+sudo yum install openssl-devel  # or dnf install openssl-devel
+
 # Build
 make
 
@@ -50,6 +58,12 @@ This allows viod to apply the correct defaults and validations.
 PCI address formats are supported. Short format matches `lspci` output 
 and is automatically expanded to full format internally.
 
+**MAC Address Generation**: For network devices (`kind = net`), if no MAC 
+address is specified in the `[vfX]` section, viod automatically generates 
+a stable MAC address that remains consistent across reboots. Generated MACs 
+use the locally administered format (`02:xx:xx:xx:xx:xx`) to avoid conflicts 
+with real hardware addresses.
+
 ------------------------------------------------------------------------
 
 ## Key Features
@@ -61,6 +75,7 @@ and is automatically expanded to full format internally.
     -   Enable promiscuous mode on the PF.
     -   Configure hardware VLAN tagging and untagging.
     -   Assign static MAC addresses to VFs.
+    -   Generate stable MAC addresses automatically when none provided.
     -   Control bandwidth or rate limiting (where hardware allows).
 -   GPU support (`kind = gpu`)
     -   Manage creation and driver binding of GPU VFs.
@@ -93,7 +108,9 @@ and is automatically expanded to full format internally.
     vlan = 100
 
     [vf1]
-    mac = 52:54:00:ab:cd:02
+    # MAC auto-generated: stable across reboots
+    driver = igbvf
+    vlan = 200
 
 ### GPU device (`/etc/vio.d/gpu0.conf`)
 

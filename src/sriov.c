@@ -166,8 +166,20 @@ int configure_vf(pf_config_t *pf_config, vf_config_t *vf_config) {
     log_message(LOG_INFO, "Configuring VF %d for PF %s", vf_config->id, pf_config->name);
     
     // Set MAC address (network devices only)
-    if (pf_config->kind == DEVICE_KIND_NET && strlen(vf_config->mac) > 0) {
-        if (set_vf_mac(pf_config->name, vf_config->id, vf_config->mac) != 0) {
+    if (pf_config->kind == DEVICE_KIND_NET) {
+        char mac_to_set[18];
+        
+        if (strlen(vf_config->mac) > 0) {
+            // Use configured MAC
+            strncpy(mac_to_set, vf_config->mac, sizeof(mac_to_set) - 1);
+            mac_to_set[sizeof(mac_to_set) - 1] = '\0';
+        } else {
+            // Generate stable MAC address
+            generate_stable_mac(pf_config->name, vf_config->id, mac_to_set);
+            log_message(LOG_INFO, "Generated stable MAC %s for VF %d", mac_to_set, vf_config->id);
+        }
+        
+        if (set_vf_mac(pf_config->name, vf_config->id, mac_to_set) != 0) {
             log_message(LOG_WARNING, "Failed to set MAC for VF %d", vf_config->id);
         }
     }
@@ -424,4 +436,21 @@ int bind_vf_driver(const char *pci_addr, const char *driver) {
     
     log_message(LOG_INFO, "Successfully bound %s to driver %s", pci_addr, driver);
     return 0;
+}
+
+void generate_stable_mac(const char *pf_pci_addr, int vf_id, char *mac_addr) {
+    unsigned char hash[SHA256_DIGEST_LENGTH];
+    char input[512];
+    
+    // Create deterministic input string: PCI address + VF ID + "viod"
+    snprintf(input, sizeof(input), "%s-%d-viod", pf_pci_addr, vf_id);
+    
+    // Generate SHA256 hash
+    SHA256((unsigned char *)input, strlen(input), hash);
+    
+    // Create MAC address with locally administered bit set (02:xx:xx:xx:xx:xx)
+    // This ensures it won't conflict with real hardware MACs
+    // Use the first 5 bytes of the hash for the last 5 octets
+    snprintf(mac_addr, 18, "02:%02x:%02x:%02x:%02x:%02x",
+             hash[0], hash[1], hash[2], hash[3], hash[4]);
 }

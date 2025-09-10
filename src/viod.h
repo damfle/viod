@@ -13,6 +13,7 @@
 #include <syslog.h>
 #include <signal.h>
 #include <sys/inotify.h>
+#include <openssl/sha.h>
 
 #define CONFIG_DIR "/etc/vio.d"
 #define MAX_VFS 256
@@ -60,6 +61,7 @@ int bind_vf_driver(const char *pci_addr, const char *driver);
 int get_vf_pci_address(const char *pf_name, int vf_id, char *vf_pci_addr, size_t addr_size);
 int get_pf_pci_address(const char *pf_name, device_kind_t kind, char *pf_pci_addr, size_t addr_size);
 int normalize_pci_address(const char *input_addr, char *normalized_addr, size_t addr_size);
+void generate_stable_mac(const char *pf_pci_addr, int vf_id, char *mac_addr);
 void cleanup_configs(config_list_t *configs);
 void log_message(int priority, const char *format, ...);
 
